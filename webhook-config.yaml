@@ -1,0 +1,10 @@
+webhook:
+  allow_empty_secret_for_ping: true
+
+server:
+  host: "0.0.0.0"
+  port: 7070
+  max_content_length: 5242880
+
+logging:
+  level: INFO

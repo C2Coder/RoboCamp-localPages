@@ -1,0 +1,13 @@
+PyYAML
+requests
+python-dotenv
+
+# DNS
+git+https://github.com/paulc/dnslib.git
+
+# Webhook server
+Flask
+waitress
+
+# Git
+GitPython
