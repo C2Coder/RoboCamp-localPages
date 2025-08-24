@@ -15,7 +15,7 @@ import signal
 import hashlib
 import threading
 
-CONFIG_FILE = "webhook-config.yaml"
+CONFIG_FILE = "./webhook/config.yaml"
 
 # ---------------------------------------------------------------------------
 # Config loader
@@ -74,6 +74,8 @@ data_store = {
     "workflow_run": [],
     "check_run": [],
     "workflow_job": [],
+    "check_suite": [],
+    "last_update": {},  # Store last update timestamps for each event type
 }
 
 def get_data(event_name: str) -> list:
@@ -83,24 +85,25 @@ def get_data(event_name: str) -> list:
         return []
     return data_store[event_name]
 
-def add_data(event_name: str, data: dict) -> None:
+def add_data(_data_store: dict, event_name: str, data: dict) -> None:
     """Add data for a specific event type."""
-    if event_name not in data_store:
+    if event_name not in _data_store:
+        log(event_name.keys())
         log(f"Unknown event type: {event_name}")
         return
-    data_store[event_name].append(data)
+    _data_store[event_name].append(data)
     if "timestamp" in data:
-        data_store["last_update"][event_name] = data["timestamp"]
+        _data_store["last_update"][event_name] = data["timestamp"]
     else:
-        data_store["last_update"][event_name] = datetime.now().isoformat()
+        _data_store["last_update"][event_name] = datetime.now().isoformat()
     log(f"Data added for {event_name}: {data}")
 
-    save_data()  # Save data after each addition
+    save_data(_data_store)  # Save data after each addition
 
-def save_data(filename: str = "webhook/data_store.json") -> None:
+def save_data(_data_store: dict, filename: str = "webhook/data_store.json") -> None:
     try:
         with open(filename, "w", encoding="utf-8") as f:
-            json.dump(data_store, f, ensure_ascii=False, indent=2)
+            json.dump(_data_store, f, ensure_ascii=False, indent=2)
     except Exception as exc:
         log(f"Failed to save data store: {exc}")
 
@@ -114,7 +117,7 @@ def load_data(filename: str = "webhook/data_store.json") -> None:
             for k in data_store:
                 if k in loaded:
                     data_store[k] = loaded[k]
-            log(f"Data store loaded from {filename}")
+            log(f"Data store loaded")
     except Exception as exc:
         log(f"Failed to load data store: {exc}")
 
@@ -184,14 +187,14 @@ def handle_push(event_name: str, delivery_id: str, payload: dict, headers: Dict[
     branch = payload.get("ref", "").split("/")[-1]
     repo = payload.get("repository", {}).get("full_name")
     log(f"[push] Push event in {repo} branch={branch} delivery={delivery_id}")
-
+    
     data = {
         "repository": repo,
         "branch": branch,
         "pusher": payload.get("pusher", {}).get("name"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_pull_request(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     action = payload.get("action")
@@ -205,20 +208,20 @@ def handle_pull_request(event_name: str, delivery_id: str, payload: dict, header
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_page_build(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     build_status = payload.get("build", {}).get("status")
     repo = payload.get("repository", {}).get("full_name")
     log(f"[page_build] Pages build {build_status} in {repo} delivery={delivery_id}")
-
+    print(data_store.keys())
     data = {
         "repository": repo,
         "build_status": build_status,
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_deployment(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     task = payload.get("deployment", {}).get("task")
@@ -231,7 +234,7 @@ def handle_deployment(event_name: str, delivery_id: str, payload: dict, headers:
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_deployment_status(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     deployment_status = payload.get("deployment_status", {}).get("state")
@@ -244,7 +247,7 @@ def handle_deployment_status(event_name: str, delivery_id: str, payload: dict, h
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_workflow_run(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     run_status = payload.get("workflow_run", {}).get("status")
@@ -259,7 +262,7 @@ def handle_workflow_run(event_name: str, delivery_id: str, payload: dict, header
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_check_run(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     check_run_status = payload.get("check_run", {}).get("status")
@@ -274,7 +277,7 @@ def handle_check_run(event_name: str, delivery_id: str, payload: dict, headers: 
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_workflow_job(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     job_status = payload.get("workflow_job", {}).get("status")
@@ -289,7 +292,7 @@ def handle_workflow_job(event_name: str, delivery_id: str, payload: dict, header
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 def handle_check_suite(event_name: str, delivery_id: str, payload: dict, headers: Dict[str, str]) -> None:
     check_suite_status = payload.get("check_suite", {}).get("status")
@@ -302,7 +305,7 @@ def handle_check_suite(event_name: str, delivery_id: str, payload: dict, headers
         "sender": payload.get("sender", {}).get("login"),
         "timestamp": datetime.now().isoformat(),
     }
-    add_data(event_name, data)
+    add_data(data_store, event_name, data)
 
 EVENT_HANDLERS: Dict[str, EventHandler] = {
     "ping": handle_ping,
@@ -338,8 +341,9 @@ def _worker_loop() -> None:
             else:
                 log(f"No handler for event '{event_name}'")
                 log(f"Payload: {payload}")
-        except Exception:
+        except Exception as e:
             log(f"Error handling {event_name} {delivery_id}")
+            log(f"Error: {e}")
         finally:
             _event_queue.task_done()
     log("Worker exiting.")
@@ -353,7 +357,14 @@ threading.Thread(target=_worker_loop, name="WebhookWorker", daemon=True).start()
 
 @app.route("/", methods=["GET"])
 def index() -> Any:
-    return jsonify({"message": "Webhook server is running."})
+    try:
+        with open("webhook/index.html", "r", encoding="utf-8") as f:
+            content = f.read()
+            content = content.replace("{year}", str(datetime.now().year))
+            return content, 200, {"Content-Type": "text/html"}
+    except Exception as exc:
+        log(f"Failed to read index.html: {exc}")
+        abort(404, description="index.html not found")
 
 @app.route("/health", methods=["GET"])
 def health() -> Any:
@@ -382,7 +393,7 @@ def github_webhook() -> Any:
     _event_queue.put((event_name, delivery_id, payload, headers))
     return jsonify({"status": "accepted", "event": event_name, "delivery": delivery_id})
 
-@app.route("/api/repo/<string:repo_author>/<string:repo_name>/<string:event>", methods=["GET"])
+@app.route("/webhook/repo/<string:repo_author>/<string:repo_name>/<string:event>", methods=["GET"])
 def get_repo_data(repo_author: str, repo_name: str, event: str) -> Any:
     """Get data for a specific repository."""
     repo = f"{repo_author.strip()}/{repo_name.strip()}"
@@ -398,6 +409,60 @@ def get_repo_data(repo_author: str, repo_name: str, event: str) -> Any:
     
     return jsonify(data)
 
+@app.route("/webhook/recent-deliveries", methods=["GET"])
+def get_recent_deliveries() -> Any:
+    all_events = []
+
+    for event_type in [
+        "ping", "push", "pull_request", "page_build", "deployment",
+        "deployment_status", "workflow_run", "check_run", "workflow_job", "check_suite"
+    ]:
+        for event in get_data(event_type):
+            evt = event.copy()
+            evt["event_type"] = event_type
+            all_events.append(evt)
+
+    # Sort by timestamp descending
+    def get_ts(e):
+        ts = e.get("timestamp", "")
+        try:
+            return datetime.fromisoformat(ts)
+        except Exception:
+            return datetime.min
+    all_events.sort(key=get_ts, reverse=True)
+
+    # Get top 100 newest
+    recent_deliveries = all_events[:100]
+    return jsonify(recent_deliveries)
+
+
+@app.route("/webhook/recent-useful-deliveries", methods=["GET"])
+def get_recent_useful_deliveries() -> Any:
+    all_events = []
+
+    for event_type in [
+        "ping", "push", "pull_request", "page_build", "deployment",
+        "workflow_run"
+    ]:
+        
+        for event in get_data(event_type):
+            evt = event.copy()
+            evt["event_type"] = event_type
+            all_events.append(evt)
+
+    # Sort by timestamp descending
+    def get_ts(e):
+        ts = e.get("timestamp", "")
+        try:
+            return datetime.fromisoformat(ts)
+        except Exception:
+            return datetime.min
+    all_events.sort(key=get_ts, reverse=True)
+
+    # Get top 20 newest
+    recent_deliveries = all_events[:20]
+    return jsonify(recent_deliveries)
+
 # ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
@@ -406,10 +471,9 @@ def _graceful_shutdown(*_: Any) -> None:
     log("Shutdown signal received.")
     save_data()
     _shutdown_event.set()
-    time.sleep(1)  # Allow worker to finish processing
+    time.sleep(1)
     sys.exit(0)
     
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -417,12 +481,13 @@ def _graceful_shutdown(*_: Any) -> None:
 def main() -> int:
     signal.signal(signal.SIGINT, _graceful_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
+    if not GITHUB_WEBHOOK_SECRET:
+        log("Webhook secret is empty!")
 
     if not os.path.exists("webhook"):
         os.makedirs("webhook", exist_ok=True)
         log("Created webhook directory.")
 
-    log("Loading data store at startup...")
     try:
         load_data()
     except Exception as e:
@@ -431,10 +496,6 @@ def main() -> int:
     log(f"Starting server at {HOST}:{PORT}")
     app.run(host=HOST, port=PORT, debug=False, use_reloader=True)
     log("Server stopped.")
-
-    if not GITHUB_WEBHOOK_SECRET:
-        log("Webhook secret is empty! Non-ping events will be rejected unless allowed by config.")
-
 
 if __name__ == "__main__":
     main()

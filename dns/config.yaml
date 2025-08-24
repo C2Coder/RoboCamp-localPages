@@ -1,15 +1,17 @@
 listen: 0.0.0.0   # bind address
 port: 53          # UDP port (needs root or CAP_NET_BIND_SERVICE <1024)
 
-# TTL for all synthesized records (seconds)
-ttl: 60
+upstream_dns: 1.1.1.1
 
-# Domain to return in CNAME answers for banned domains
-banned_cname: banned.lan
+# TTL for all synthesized records (seconds)
+ttl: 300
+
+# Domain to return in A answers for banned domains
+banned_ip: 127.0.0.1 # redirect to localhost on their machines
 
 # Path to the text file containing banned domains
 banned_list:
-  - ./dns-banned.txt 
+  - ./dns/banned.txt 
   - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt
 
 # How to match banned domains: "exact" | "suffix" (suffix matches subdomains)
@@ -21,8 +23,9 @@ server_ip: null
 # Static records
 records:
   A:
-    banned.lan: server
     files.lan: server
+    vps.c2coder.eu: "89.168.102.205"
+    webhook.c2coder.eu: "89.168.102.205"
     robutek.robotikabrno.cz: server
     robocoin.robotikabrno.cz: server
     2024.robotickytabor.cz: server

@@ -1,9 +1,11 @@
+# HTTP server
 server {
     listen 80;
-    server_name webhook.c2coder.eu;
-    
+    server_name elks.lan 2023.robotickytabor.cz;
+
     location / {
-        proxy_pass http://localhost:7070;
+        proxy_pass http://localhost:8011;
+
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -11,15 +13,21 @@ server {
     }
 }
 
+# HTTPS server
 server {
     listen 443 ssl;
-    server_name webhook.c2coder.eu;
+    server_name elks.lan 2023.robotickytabor.cz;
 
-    ssl_certificate /etc/letsencrypt/live/webhook.c2coder.eu/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/webhook.c2coder.eu/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/2025.robotickytabor.cz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/2025.robotickytabor.cz/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
 
     location / {
-        proxy_pass http://localhost:7070;
+        proxy_pass http://localhost:8011;
+
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -16,10 +16,13 @@ from dnslib import (
     CNAME as DNSCNAME,
     DNSLabel,
     DNSRecord,
+    DNSError,
     QTYPE,
     RCODE,
     RR,
 )
+
+CONFIG_PATH = "dns/config.yaml"
 
 class DumbLogger: # Dummy logger to satisfy dnslib's interface
     def __init__(self,log="",prefix=True,logf=None):pass
@@ -93,9 +96,10 @@ def load_banned(path: str) -> Set[str]:
 class YamlResolver(BaseResolver):
     def __init__(self, cfg: dict):
         self.ttl = int(cfg.get("ttl", 60))
-        self.banned_cname = normalize_name(cfg.get("banned_cname", "banned.lan"))
+        self.banned_ip = normalize_name(cfg.get("banned_ip", "127.0.0.1"))
         self.banned_mode = cfg.get("banned_mode", "suffix").lower()
         self.banned_list_paths = cfg.get("banned_list")
+        self.upstream_dns = (cfg.get("upstream_dns") or "8.8.8.8")
         self.banned_set: Set[str] = set()
         for path in self.banned_list_paths if isinstance(self.banned_list_paths, list) else [self.banned_list_paths]:
             if path:
@@ -123,6 +127,8 @@ class YamlResolver(BaseResolver):
                 logging.error(f"Failed to auto-detect local IP: {e}")
                 self.server_ip = "127.0.0.1"
 
+        logging.info(f"Using upstream DNS: {self.upstream_dns}")
+
         # Replace special "server" value in A records with detected IP
         for name, value in list(self.a_records.items()):
             if isinstance(value, str) and value.strip().lower() == "server":
@@ -136,12 +142,8 @@ class YamlResolver(BaseResolver):
                 logging.error(f"Invalid IP for A record {n}: {ip}", n, ip)
                 del self.a_records[n]
 
-        # Ensure banned_cname label is known to dnslib
-        self.banned_label = DNSLabel(self.banned_cname)
-
     # ------------------------------------------------------------------
-    def _is_banned(self, qname: str) -> bool:
-        qname_n = normalize_name(qname)
+    def _is_banned(self, qname_n: str) -> bool:
         if self.banned_mode == "exact":
             return qname_n in self.banned_set
         # suffix match: domain itself or any subdomain
@@ -151,68 +153,95 @@ class YamlResolver(BaseResolver):
         return False
 
     # ------------------------------------------------------------------
-    def _answer_cname(self, request:DNSRecord, qname_label: DNSLabel, target_label: DNSLabel) -> DNSRecord:
-        logging.info(f" └ CNAME {target_label}")
+    def _answer_cname(self, request:DNSRecord, qname_label: DNSLabel, target_label: DNSLabel, source_ip: str) -> DNSRecord:
+        logging.info(f"Local    - {source_ip}: {QTYPE[request.q.qtype]} {qname_label} -> {target_label}")
         reply = request.reply()
         rr = RR(rname=qname_label, rtype=QTYPE.CNAME, rclass=1, ttl=self.ttl, rdata=DNSCNAME(target_label))
         reply.add_answer(rr)
         return reply
 
     # ------------------------------------------------------------------
-    def _answer_a(self, request:DNSRecord, qname_label: DNSLabel, ip: str) -> DNSRecord:
-        logging.info(f" └ A {ip}")
+    def _answer_a(self, request:DNSRecord, qname_label: DNSLabel, ip: str, source_ip: str) -> DNSRecord:
+        logging.info(f"Local    - {source_ip}: {QTYPE[request.q.qtype]} {qname_label} -> {ip}")
         reply = request.reply()
-        rr = RR(rname=qname_label, rtype=QTYPE.A, rclass=1, ttl=self.ttl, rdata=DNSA(ip))
-        reply.add_answer(rr)
+        reply.add_answer(RR(rname=qname_label, rtype=QTYPE.A, rclass=1, ttl=self.ttl, rdata=DNSA(ip)))
         return reply
 
     # ------------------------------------------------------------------
-    def _answer_aaaa_nodata(self, request:DNSRecord, qname_label: DNSLabel) -> DNSRecord:
+    def _answer_aaaa_nodata(self, request:DNSRecord, qname_label: DNSLabel, source_ip: str) -> DNSRecord:
         reply = request.reply()
         # No answers -> forces stub to fall back to A.
         return reply
 
     # ------------------------------------------------------------------
-    def _answer_nxdomain(self, request:DNSRecord, qname_label: DNSLabel) -> DNSRecord:
-        logging.info(" → NXDOMAIN")
+    def _answer_banned(self, request:DNSRecord, qname_label: DNSLabel, source_ip: str) -> DNSRecord:
+        logging.info(f"Banned: {source_ip}: {QTYPE[request.q.qtype]} {qname_label} -> {self.banned_ip}" )
         reply = request.reply()
-        reply.header.rcode = RCODE.NXDOMAIN
+        reply.add_answer(RR(rname=qname_label, rtype=QTYPE.A, rclass=1, ttl=self.ttl, rdata=DNSA(self.banned_ip)))
         return reply
+    
+    # ------------------------------------------------------------------
+    def _answer_upstream(self, request: DNSRecord, qname_label: DNSLabel, source_ip: str) -> DNSRecord:
+        try:
+            # Create UDP socket to upstream DNS
+            upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            upstream_sock.settimeout(2)  # seconds
+            upstream_sock.sendto(request.pack(), (self.upstream_dns, 53))  # Send to upstream DNS
+
+            # Receive response from upstream DNS
+            data, _ = upstream_sock.recvfrom(4096)
+            upstream_sock.close()
+    
+            reply = DNSRecord.parse(data)
+
+            log_data = str(reply.a)
+            while "  " in log_data:  # Clean up double spaces
+                log_data = log_data.replace("  ", " ")  # Clean up whitespace
+            log_data = log_data.split(" ")
+            logging.info(f"Upstream - {source_ip}: {QTYPE[request.q.qtype]} {qname_label} -> {log_data[3]} {log_data[4]}")
+            return reply
+
+        except DNSError as e:
+            logging.info(f"Upstream - {source_ip}: {QTYPE[request.q.qtype]} {qname_label} -> not found")
+            return reply
+        except Exception as e:
+            logging.error(f"Failed to query upstream DNS: {e} {type(e).__name__} - {source_ip} {qname_label}")
+            reply = request.reply()
+            reply.header.rcode = RCODE.SERVFAIL
+            return reply
 
     # ------------------------------------------------------------------
     def resolve(self, request: DNSRecord, handler) -> DNSRecord:  # noqa: D401
         qname_label = request.q.qname
         qname = str(qname_label)
         qtype = request.q.qtype
-
-        logging.info(f"Query: {qname} {QTYPE[qtype]}")
+        source_ip = handler.client_address[0] if handler else "unknown"
+        qname_n = normalize_name(qname)
 
         # banned?
-        if self._is_banned(qname):
-            logging.info(f" ├ banned: {qname_label} -> {self.banned_label}" )
-            return self._answer_cname(request, qname_label, self.banned_label)
+        if self._is_banned(qname_n):
+            return self._answer_banned(request, qname_label, source_ip)
 
-        qname_n = normalize_name(qname)
 
         # direct A?
         if qtype in (QTYPE.A, QTYPE.ANY):
             ip = self.a_records.get(qname_n)
             if ip:
-                return self._answer_a(request, qname_label, ip)
+                return self._answer_a(request, qname_label, ip, source_ip)
 
         # direct CNAME?
         target = self.cname_records.get(qname_n)
         if target:
-            return self._answer_cname(request, qname_label, DNSLabel(target))
+            return self._answer_cname(request, qname_label, DNSLabel(target), source_ip)
 
         # If queried for AAAA and we have an A record, some stub resolvers like a synthetic mapping?
         # We'll just return empty NOERROR so they try A.
         if qtype == QTYPE.AAAA:
             if qname_n in self.a_records or qname_n in self.cname_records:
-                return self._answer_aaaa_nodata(request, qname_label)
+                return self._answer_aaaa_nodata(request, qname_label, source_ip)
 
         # Nothing known
-        return self._answer_nxdomain(request, qname_label)
+        return self._answer_upstream(request, qname_label, source_ip)
 
 
 # ---------------------------------------------------------------------------
@@ -232,14 +261,10 @@ def load_config(path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="YAML-configurable DNS server with banned domains.")
-    parser.add_argument("--config", required=True, help="Path to YAML config file")
-    parser.add_argument("--log-level", default="INFO", help="Logging level")
-    args = parser.parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(asctime)s : %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s : %(message)s")
 
-    cfg = load_config(args.config)
+    cfg = load_config(CONFIG_PATH)
 
     listen = cfg.get("listen", "127.0.0.1")
     port = int(cfg.get("port", 53))
@@ -249,7 +274,7 @@ def main() -> int:
     # UDP only for now; add TCP if needed.
     server = DNSServer(resolver, port=port, address=listen, tcp=False, logger=DumbLogger)
 
-    logging.info(f"Starting YAML DNS server on {listen}:{port}")
+    logging.info(f"Starting DNS server on {listen}:{port}")
     try:
         server.start()
     except PermissionError:

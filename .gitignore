@@ -1,5 +1,7 @@
 __pycache__
 .venv
 .env
-webhook
+data_store.json
+nginx.conf
+*.log
 repo
