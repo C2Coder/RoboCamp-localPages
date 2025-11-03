@@ -442,7 +442,6 @@ def get_recent_useful_deliveries() -> Any:
 
     for event_type in [
         "ping", "push", "pull_request", "page_build", "deployment",
-        "workflow_run"
     ]:
         
         for event in get_data(event_type):
@@ -469,7 +468,7 @@ def get_recent_useful_deliveries() -> Any:
 
 def _graceful_shutdown(*_: Any) -> None:
     log("Shutdown signal received.")
-    save_data()
+    save_data(data_store)
     _shutdown_event.set()
     time.sleep(1)
     sys.exit(0)

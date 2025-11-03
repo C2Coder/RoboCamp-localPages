@@ -42,7 +42,7 @@ def get_remote_commit(repo, branch, token):
 def check_update_with_webhook_server(url, repo, branch, last_pull_time):
     if not url:
         raise ValueError("Webhook server URL is not configured.")
-    response = requests.get(f"{url}/api/repo/{repo}/push")
+    response = requests.get(f"{url}/webhook/repo/{repo}/push")
     if response.status_code != 200:
         raise Exception(f"Failed to check webhook server: {response.status_code} {response.text}")
     rjson = response.json()
@@ -92,6 +92,7 @@ def ensure_repo_exists(repo_cfg):
         print(f"[{repo_cfg['name']}] Local repo not found. Cloning branch '{branch}' from GitHub...")
         clone_url = f"https://github.com/{github_repo}.git"
         subprocess.check_call(["git", "clone", "-b", branch, clone_url, repo_path])
+        subprocess.check_call(["git", "config", "pull.rebase", "true"], cwd=repo_path)
     else:
         print(f"[{repo_cfg['name']}] Local repo exists.")
 
