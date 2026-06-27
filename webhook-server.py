@@ -3,6 +3,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from typing import Any, Callable, Dict
 from flask import Flask, request, abort, jsonify
+import waitress
 
 import os
 import sys
@@ -33,7 +34,7 @@ def load_config(path: str) -> dict:
                 cfg[k] = v
         return cfg
     except Exception as exc:
-        log(f"Failed to load config {path}: {exc}", file=sys.stderr)
+        log(f"Failed to load config {path}: {exc}")
         raise SystemExit(1) from exc
 
 load_dotenv()  # take environment variables
@@ -88,7 +89,6 @@ def get_data(event_name: str) -> list:
 def add_data(_data_store: dict, event_name: str, data: dict) -> None:
     """Add data for a specific event type."""
     if event_name not in _data_store:
-        log(event_name.keys())
         log(f"Unknown event type: {event_name}")
         return
     _data_store[event_name].append(data)
@@ -167,7 +167,8 @@ def verify_github_signature(raw_body: bytes, headers: Dict[str, str]) -> bool:
         return False
 
     sent_sig = sig_header.split("=", 1)[1].strip()
-    expected_sig = hmac.new(GITHUB_WEBHOOK_SECRET.encode("utf-8"), msg=raw_body, digestmod=hashlib.sha256).hexdigest()
+    secret = GITHUB_WEBHOOK_SECRET or ""
+    expected_sig = hmac.new(secret.encode("utf-8"), msg=raw_body, digestmod=hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(expected_sig, sent_sig):
         log(f"Signature mismatch. expected={expected_sig} got={sent_sig}")
@@ -214,7 +215,6 @@ def handle_page_build(event_name: str, delivery_id: str, payload: dict, headers:
     build_status = payload.get("build", {}).get("status")
     repo = payload.get("repository", {}).get("full_name")
     log(f"[page_build] Pages build {build_status} in {repo} delivery={delivery_id}")
-    print(data_store.keys())
     data = {
         "repository": repo,
         "build_status": build_status,
@@ -355,6 +355,15 @@ threading.Thread(target=_worker_loop, name="WebhookWorker", daemon=True).start()
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.route("/logo.svg", methods=["GET"])
+def logo() -> Any:
+    try:
+        with open("webhook/logo.svg", "r", encoding="utf-8") as f:
+            return f.read(), 200, {"Content-Type": "image/svg+xml"}
+    except Exception as exc:
+        log(f"Failed to read logo.svg: {exc}")
+        abort(404, description="logo.svg not found")
+
 @app.route("/", methods=["GET"])
 def index() -> Any:
     try:
@@ -377,10 +386,13 @@ def github_webhook() -> Any:
     event_name = headers.get("X-Github-Event", "?")
     delivery_id = headers.get("X-Github-Delivery", "?")
 
-    if not GITHUB_WEBHOOK_SECRET:
+    allow_empty_ping = CFG.get("webhook", {}).get("allow_empty_secret_for_ping", False)
+    if event_name == "ping" and allow_empty_ping:
+        pass
+    elif not GITHUB_WEBHOOK_SECRET:
         log("Webhook secret is not set.")
         abort(500, description="Missing webhook secret.")
-    if not verify_github_signature(raw_body, headers):
+    elif not verify_github_signature(raw_body, headers):
         log(f"Invalid signature for event {event_name} delivery {delivery_id}")
         abort(403, description="Invalid signature.")
     
@@ -409,6 +421,13 @@ def get_repo_data(repo_author: str, repo_name: str, event: str) -> Any:
     
     return jsonify(data)
 
+def _get_timestamp(e: dict) -> datetime:
+    ts = e.get("timestamp", "")
+    try:
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return datetime.min
+
 @app.route("/webhook/recent-deliveries", methods=["GET"])
 def get_recent_deliveries() -> Any:
     all_events = []
@@ -422,45 +441,22 @@ def get_recent_deliveries() -> Any:
             evt["event_type"] = event_type
             all_events.append(evt)
 
-    # Sort by timestamp descending
-    def get_ts(e):
-        ts = e.get("timestamp", "")
-        try:
-            return datetime.fromisoformat(ts)
-        except Exception:
-            return datetime.min
-    all_events.sort(key=get_ts, reverse=True)
-
-    # Get top 100 newest
-    recent_deliveries = all_events[:100]
-    return jsonify(recent_deliveries)
+    all_events.sort(key=_get_timestamp, reverse=True)
+    return jsonify(all_events[:100])
 
 
 @app.route("/webhook/recent-useful-deliveries", methods=["GET"])
 def get_recent_useful_deliveries() -> Any:
     all_events = []
 
-    for event_type in [
-        "ping", "push", "pull_request", "page_build", "deployment",
-    ]:
-        
+    for event_type in ["ping", "push", "pull_request", "page_build", "deployment"]:
         for event in get_data(event_type):
             evt = event.copy()
             evt["event_type"] = event_type
             all_events.append(evt)
 
-    # Sort by timestamp descending
-    def get_ts(e):
-        ts = e.get("timestamp", "")
-        try:
-            return datetime.fromisoformat(ts)
-        except Exception:
-            return datetime.min
-    all_events.sort(key=get_ts, reverse=True)
-
-    # Get top 20 newest
-    recent_deliveries = all_events[:20]
-    return jsonify(recent_deliveries)
+    all_events.sort(key=_get_timestamp, reverse=True)
+    return jsonify(all_events[:20])
 
 # ---------------------------------------------------------------------------
 # Shutdown
@@ -493,8 +489,9 @@ def main() -> int:
         log(f"Error loading data store: {e}")
 
     log(f"Starting server at {HOST}:{PORT}")
-    app.run(host=HOST, port=PORT, debug=False, use_reloader=True)
+    waitress.serve(app, host=HOST, port=PORT)
     log("Server stopped.")
+    return 0
 
 if __name__ == "__main__":
     main()
