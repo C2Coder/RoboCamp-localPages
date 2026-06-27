@@ -1,7 +1,5 @@
 # RoboCamp-localPages
 
-
-
 ## Install
 
 ```bash
@@ -19,20 +17,9 @@ Activate venv
 source .venv/bin/activate
 ```
 
-Create `.env` file with:
-```conf
-GITHUB_WEBHOOK_SECRET=your-webhook-secret
-GITHUB_TOKEN=your-github-token
-```
+Rename `.env.example` to `.env` and edit to your liking:
 
-## RUN DNS
-Edit the `dns/config.yaml` file to match what you need
-
-```bash
-sudo ./.venv/bin/python3 dns-server.py
-```
-
-## RUN REPO SERVER
+## Run Repo Server
 
 Edit the `config.yaml` file to match what you need
 
@@ -47,7 +34,7 @@ sudo ln -s /etc/nginx/sites-available/localpages /etc/nginx/sites-enabled/
 python3 repo-server.py
 ```
 
-## RUN WEBHOOK SERVER (not needed)
+## Run Webhook Server (on a public ip and point github to it)
 ```bash
 sudo cp ./webhook/nginx.conf /etc/nginx/sites-available/github-webhook
 sudo ln -s /etc/nginx/sites-available/github-webhook /etc/nginx/sites-enabled/

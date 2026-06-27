@@ -1,4 +1,3 @@
-
 Create venv
 ```bash
 python -m venv .venv
@@ -14,11 +13,12 @@ Install certbot wedos extension
 pip install certbot-dns-wedos
 ```
 
-Get the certificates
+Get the certificates for all domains
 ```bash
 .venv/bin/certbot certonly \
     --authenticator dns-wedos \
     --dns-wedos-propagation-seconds 450 \
     --dns-wedos-credentials /home/c2coder/config/wedos/wapi-my.ini \
-    -d c2coder.eu
+    -d robutek.robotikabrno.cz \
+    -d 2025.robotickytabor.cz 
 ```

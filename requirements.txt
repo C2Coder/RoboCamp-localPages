@@ -3,7 +3,7 @@ requests
 python-dotenv
 
 # DNS
-git+https://github.com/paulc/dnslib.git
+# dnslib removed - DNS handled externally via dnsmasq
 
 # Webhook server
 Flask
