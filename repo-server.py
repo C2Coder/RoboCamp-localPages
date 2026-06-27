@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import yaml
 import subprocess
@@ -9,6 +10,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 from functools import partial
+from typing import Any
 
 CONFIG_PATH = "config.yaml"
 
@@ -16,7 +18,7 @@ CONFIG_PATH = "config.yaml"
 # Config
 # ---------------------------------------------------------------------------
 
-def load_config():
+def load_config() -> dict:
     load_dotenv()
     with open(CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
@@ -25,10 +27,10 @@ def load_config():
 # GitHub Operations
 # ---------------------------------------------------------------------------
 
-def get_local_commit(branch, abs_path):
+def get_local_commit(branch: str, abs_path: str) -> str:
     return subprocess.check_output(["git", "rev-parse", branch], cwd=abs_path).strip().decode()
 
-def get_remote_commit(repo, branch, token):
+def get_remote_commit(repo: str, branch: str, token: str) -> str:
     headers = {"Authorization": f"Bearer {token}"}
     url = f"https://api.github.com/repos/{repo}/commits/{branch}"
     response = requests.get(url, headers=headers)
@@ -39,7 +41,7 @@ def get_remote_commit(repo, branch, token):
 # Webhook Server Operations
 # ---------------------------------------------------------------------------
 
-def check_update_with_webhook_server(url, repo, branch, last_pull_time):
+def check_update_with_webhook_server(url: str, repo: str, branch: str, last_pull_time: float) -> bool:
     if not url:
         raise ValueError("Webhook server URL is not configured.")
     response = requests.get(f"{url}/webhook/repo/{repo}/push")
@@ -83,47 +85,47 @@ def check_update_with_webhook_server(url, repo, branch, last_pull_time):
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def ensure_repo_exists(repo_cfg):
-    repo_path = repo_cfg["path"]
+def ensure_repo_exists(repo_cfg: dict, token: str) -> str:
+    repo_name = repo_cfg["repo"].split("/")[-1]
+    repo_path = f"repo/{repo_name}"
     github_repo = repo_cfg["repo"]
     branch = repo_cfg["branch"]
 
     if not os.path.isdir(repo_path) or not os.path.isdir(os.path.join(repo_path, ".git")):
         print(f"[{repo_cfg['name']}] Local repo not found. Cloning branch '{branch}' from GitHub...")
-        clone_url = f"https://github.com/{github_repo}.git"
-        subprocess.check_call(["git", "clone", "-b", branch, clone_url, repo_path])
+        clone_url = f"https://oauth2:{token}@github.com/{github_repo}.git"
+        subprocess.check_call(["git", "clone", "--depth", "1", "--single-branch", "-b", branch, clone_url, repo_path])
         subprocess.check_call(["git", "config", "pull.rebase", "true"], cwd=repo_path)
     else:
         print(f"[{repo_cfg['name']}] Local repo exists.")
 
-def pull_latest(abs_path):
+    return repo_path
+
+def pull_latest(abs_path: str) -> None:
     subprocess.check_call(["git", "pull"], cwd=abs_path)
 
-def run_http_server(port, directory):
+def run_http_server(port: int, directory: str) -> None:
     handler_class = partial(http.server.SimpleHTTPRequestHandler, directory=directory)
 
     with socketserver.TCPServer(("", port), handler_class) as httpd:
         print(f"[{directory}] Serving HTTP on port {port}")
         httpd.serve_forever()
 
-def watch_repo(repo_cfg, global_cfg, token):
+def watch_repo(repo_cfg: dict, global_cfg: dict, token: str) -> None:
     name = repo_cfg["name"]
-    path = repo_cfg["path"]
-    abs_path = global_cfg["root_cwd"]+ "/" + path.strip("./")
+    repo_path = ensure_repo_exists(repo_cfg, token)
+    abs_path = os.path.normpath(os.path.join(global_cfg["root_cwd"], repo_path))
     github_repo = repo_cfg["repo"]
     branch = repo_cfg["branch"]
 
     update_method = repo_cfg.get("update_method", "github").lower()
-    host_http = repo_cfg.get("host_http_server", False)
-    http_port = repo_cfg.get("http_port", 8080)
+    http_port = repo_cfg.get("http_port")
 
     github_interval = global_cfg.get("github_poll_interval", 60)
     webhook_interval = global_cfg.get("webhook_poll_interval", 30)
     webhook_base_url = global_cfg.get("webhook_base_url", "")
 
-    ensure_repo_exists(repo_cfg)
-
-    if host_http:
+    if http_port:
         threading.Thread(target=run_http_server, args=(http_port, abs_path), daemon=True).start()
 
     last_github_check = 0
@@ -163,8 +165,7 @@ def watch_repo(repo_cfg, global_cfg, token):
 # Main Function
 # ---------------------------------------------------------------------------
 
-def main():
-
+def main() -> None:
     root_cwd = os.getcwd()
     print(f"Current working directory: {root_cwd}")
     config = load_config()
@@ -197,5 +198,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# TODO: Working directories
