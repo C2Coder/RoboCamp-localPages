@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SESSION="RepoServer"
+SESSION="repo-server"
 
 # Kill if it already exists
 screen -S "$SESSION" -X quit >/dev/null 2>&1
